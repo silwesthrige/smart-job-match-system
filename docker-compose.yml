@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./server
+    container_name: smart-job-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  frontend:
+    image: node:18-alpine
+    container_name: smart-job-frontend
+    working_dir: /app
+    volumes:
+      - ./Client:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"]
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+# Optional: a shared network (Docker Compose creates one by default)
