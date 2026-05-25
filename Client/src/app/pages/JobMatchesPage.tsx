@@ -7,9 +7,9 @@ import { ProgressBar } from "../components/ProgressBar";
 import { motion } from "motion/react";
 import { MapPin, DollarSign, Briefcase, Filter, CheckCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 
-const jobs = [
+const defaultJobs = [
   {
     id: 1,
     title: "Senior React Developer",
@@ -32,55 +32,39 @@ const jobs = [
     posted: "1 week ago",
     skills: ["React", "Python", "AWS"],
   },
-  {
-    id: 3,
-    title: "Frontend Developer",
-    company: "DesignHub",
-    location: "New York, NY",
-    type: "Full-time",
-    salary: "$100k - $140k",
-    match: 87,
-    posted: "3 days ago",
-    skills: ["React", "CSS", "JavaScript"],
-  },
-  {
-    id: 4,
-    title: "JavaScript Engineer",
-    company: "CloudSoft",
-    location: "Austin, TX",
-    type: "Full-time",
-    salary: "$95k - $130k",
-    match: 85,
-    posted: "5 days ago",
-    skills: ["JavaScript", "Node.js", "MongoDB"],
-  },
-  {
-    id: 5,
-    title: "React Native Developer",
-    company: "MobileFirst",
-    location: "Remote",
-    type: "Contract",
-    salary: "$90k - $120k",
-    match: 82,
-    posted: "1 day ago",
-    skills: ["React Native", "TypeScript", "Firebase"],
-  },
-  {
-    id: 6,
-    title: "Web Developer",
-    company: "WebAgency",
-    location: "Boston, MA",
-    type: "Full-time",
-    salary: "$80k - $110k",
-    match: 78,
-    posted: "1 week ago",
-    skills: ["HTML", "CSS", "JavaScript"],
-  },
 ];
 
 export function JobMatchesPage() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<any[]>(defaultJobs);
+
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem("last_matches");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // map parsed matches to job shape expected in UI
+          const mapped = parsed.map((m: any, idx: number) => ({
+            id: m.job_id ?? idx,
+            title: m.title || m.job_title || "Untitled",
+            company: m.company || "",
+            location: m.location || "Remote",
+            type: "Full-time",
+            salary: m.salary || "",
+            match: Math.round((m.score || 0) * 100),
+            posted: m.posted || "",
+            skills: m.skills || [],
+            url: m.url || "#",
+          }));
+          setJobs(mapped);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
 
   const filteredJobs = selectedType
     ? jobs.filter((job) => job.type === selectedType)

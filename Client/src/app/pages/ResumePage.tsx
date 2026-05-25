@@ -4,13 +4,17 @@ import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { motion } from "motion/react";
 import { Upload, FileText, CheckCircle, X } from "lucide-react";
-import { useState } from "react";
+import React, { useState } from "react";
+import { uploadCV, findGlobalJobs, getSkillGap } from "../../api";
 
 export function ResumePage() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [matches, setMatches] = useState<any[]>([]);
+  const [cvSkillsState, setCvSkillsState] = useState<string[]>([]);
+  const [skillGapState, setSkillGapState] = useState<string[]>([]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -30,23 +34,41 @@ export function ResumePage() {
     }
   };
 
-  const handleFileUpload = (file: File) => {
+  const handleFileUpload = async (file: File) => {
     setUploadedFile(file.name);
     setIsProcessing(true);
-    
-    // Simulate upload progress
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      currentProgress += 10;
-      setProgress(currentProgress);
-      
-      if (currentProgress >= 100) {
-        clearInterval(interval);
-        setTimeout(() => {
-          setIsProcessing(false);
-        }, 500);
-      }
-    }, 200);
+    setProgress(5);
+
+    try {
+      const up = await uploadCV(file); // { cv_id }
+      setProgress(40);
+      const cvId = up.cv_id;
+
+      // Trigger scraping + matching
+      const res = await findGlobalJobs(cvId, 10, 50);
+      setProgress(80);
+
+      // store matches for JobMatchesPage fallback
+      const foundMatches = res.matches || [];
+      localStorage.setItem("last_matches", JSON.stringify(foundMatches));
+      setMatches(foundMatches);
+
+      // get aggregated skill gap and cv skills
+      const sg = await getSkillGap(cvId, 10);
+      const cvSkills = sg.cv_skills || [];
+      const skillGap = sg.skill_gap || [];
+      setCvSkillsState(cvSkills);
+      setSkillGapState(skillGap);
+
+      setProgress(100);
+      setIsProcessing(false);
+
+    } catch (err) {
+      console.error(err);
+      setIsProcessing(false);
+      setProgress(0);
+      alert("Upload or matching failed. Check backend is running and try again.");
+    }
   };
 
   return (
@@ -183,20 +205,12 @@ export function ResumePage() {
                   </h3>
                   <div className="space-y-3">
                     <div>
-                      <p className="text-sm text-gray-600">Name</p>
-                      <p className="font-medium text-gray-900">John Doe</p>
+                      <p className="text-sm text-gray-600">File</p>
+                      <p className="font-medium text-gray-900">{uploadedFile}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Email</p>
-                      <p className="font-medium text-gray-900">john.doe@example.com</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Phone</p>
-                      <p className="font-medium text-gray-900">+1 (555) 123-4567</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Experience</p>
-                      <p className="font-medium text-gray-900">5 years</p>
+                      <p className="text-sm text-gray-600">Detected Skills</p>
+                      <p className="font-medium text-gray-900">{cvSkillsState.join(', ') || '—'}</p>
                     </div>
                   </div>
                 </Card>
@@ -204,26 +218,46 @@ export function ResumePage() {
                 <Card>
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Detected Skills</h3>
                   <div className="flex flex-wrap gap-2">
-                    {["React", "JavaScript", "TypeScript", "Node.js", "CSS", "Git", "REST APIs", "MongoDB"].map(
-                      (skill, index) => (
-                        <span
-                          key={index}
-                          className="px-3 py-1 bg-[#4F46E5]/10 text-[#4F46E5] rounded-full text-sm"
-                        >
+                    {cvSkillsState.length > 0 ? (
+                      cvSkillsState.map((skill, index) => (
+                        <span key={index} className="px-3 py-1 bg-[#4F46E5]/10 text-[#4F46E5] rounded-full text-sm">
                           {skill}
                         </span>
-                      )
+                      ))
+                    ) : (
+                      <span className="text-sm text-gray-500">No skills detected yet.</span>
                     )}
                   </div>
-                  <Button className="w-full mt-6">
-                    Find Matching Jobs
-                  </Button>
                 </Card>
               </motion.div>
             )}
 
-            {/* Tips */}
-            <motion.div
+            {/* Matches */}
+            {matches.length > 0 && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-8">
+                <Card>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Matches</h3>
+                  <div className="space-y-4">
+                    {matches.map((job, idx) => (
+                      <div key={job.job_id || idx} className="flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold">{job.title}</div>
+                          <div className="text-sm text-gray-600">{job.company}</div>
+                          <div className="text-sm text-gray-500">Score: {(job.score*100 || job.score).toFixed ? (job.score*100).toFixed(1) : job.score}</div>
+                        </div>
+                        <div>
+                          <a href={job.url} target="_blank" rel="noreferrer">
+                            <Button>View</Button>
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </motion.div>
+            )}
+
+            {/* Tips */}            <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
