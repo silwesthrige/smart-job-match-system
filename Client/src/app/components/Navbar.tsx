@@ -1,6 +1,25 @@
-import { Bell, Search, User } from "lucide-react";
+import { Bell, Search, User, Loader2 } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { getMe } from "../../api";
 
 export function Navbar() {
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const data = await getMe();
+        setUser(data);
+      } catch (err) {
+        console.error("Failed to fetch user profile", err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchUser();
+  }, []);
+
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
       <div className="flex items-center justify-between px-8 py-4">
@@ -23,11 +42,15 @@ export function Navbar() {
           
           <div className="flex items-center gap-3 pl-4 border-l border-gray-200">
             <div className="w-10 h-10 bg-gradient-to-br from-[#4F46E5] to-[#06B6D4] rounded-full flex items-center justify-center">
-              <User size={20} className="text-white" />
+              {isLoading ? (
+                <Loader2 className="animate-spin text-white" size={20} />
+              ) : (
+                <User size={20} className="text-white" />
+              )}
             </div>
             <div>
-              <p className="text-sm font-medium">John Doe</p>
-              <p className="text-xs text-gray-500">Job Seeker</p>
+              <p className="text-sm font-medium">{user?.name || "Job Seeker"}</p>
+              <p className="text-xs text-gray-500">{user ? "Authenticated" : "Not logged in"}</p>
             </div>
           </div>
         </div>

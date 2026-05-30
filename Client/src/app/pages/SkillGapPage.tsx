@@ -5,61 +5,43 @@ import { Button } from "../components/Button";
 import { Tag } from "../components/Tag";
 import { ProgressBar } from "../components/ProgressBar";
 import { motion } from "motion/react";
-import { TrendingUp, BookOpen, Award, ExternalLink, Target, Loader2 } from "lucide-react";
+import { TrendingUp, BookOpen, Award, ExternalLink, Target, Loader2, Upload } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import { getSkillGap } from "../../api";
-
-const learningPaths = [
-  {
-    title: "TypeScript Fundamentals",
-    provider: "Udemy",
-    duration: "12 hours",
-    rating: 4.8,
-    students: "45,230",
-    price: "$79.99",
-  },
-  {
-    title: "GraphQL Complete Guide",
-    provider: "Coursera",
-    duration: "8 weeks",
-    rating: 4.7,
-    students: "23,450",
-    price: "$49.99/mo",
-  },
-  {
-    title: "Docker & Kubernetes",
-    provider: "Pluralsight",
-    duration: "15 hours",
-    rating: 4.9,
-    students: "67,890",
-    price: "$29.99/mo",
-  },
-];
+import { Link, useNavigate } from "react-router-dom";
 
 export function SkillGapPage() {
-  const [skillGap, setSkillGap] = useState<string[]>([]);
+  const [skillGap, setSkillGap] = useState<any[]>([]);
   const [cvSkills, setCvSkills] = useState<string[]>([]);
+  // FIX: use API recommendations instead of hardcoded courses
+  const [recommendations, setRecommendations] = useState<{ title: string; url: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [noCv, setNoCv] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     async function fetchData() {
-      const cvId = localStorage.getItem("cv_id");
-      if (!cvId) {
-        setIsLoading(false);
-        return;
-      }
       try {
-        const data = await getSkillGap(cvId);
+        const data = await getSkillGap();
         setSkillGap(data.skill_gap || []);
         setCvSkills(data.cv_skills || []);
-      } catch (e) {
-        console.error(e);
+        setRecommendations(data.recommendations || []);
+      } catch (e: any) {
+        if (e.message.includes("Unauthorized")) {
+          navigate("/login");
+          return;
+        }
+        if (e.message.includes("404") || e.message.includes("CV not found")) {
+          setNoCv(true);
+        } else {
+          console.error(e);
+        }
       } finally {
         setIsLoading(false);
       }
     }
     fetchData();
-  }, []);
+  }, [navigate]);
 
   if (isLoading) {
     return (
@@ -69,26 +51,53 @@ export function SkillGapPage() {
     );
   }
 
+  if (noCv) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex flex-col">
+          <Navbar />
+          <main className="flex-1 p-8 flex items-center justify-center">
+            <Card className="max-w-md text-center p-12">
+              <div className="w-20 h-20 bg-[#4F46E5]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Upload className="text-[#4F46E5]" size={40} />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">No Resume Found</h2>
+              <p className="text-gray-600 mb-8">
+                Upload your resume to see personalised skill gap analysis and course recommendations.
+              </p>
+              <Link to="/resume">
+                <Button className="w-full">Go to Resume Upload</Button>
+              </Link>
+            </Card>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  const matchPct =
+    cvSkills.length > 0
+      ? Math.round((cvSkills.length / (cvSkills.length + skillGap.length)) * 100)
+      : 0;
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      
       <div className="flex-1 flex flex-col">
         <Navbar />
-        
         <main className="flex-1 p-8">
           <div className="max-w-7xl mx-auto">
             <div className="mb-8">
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Skill Gap Analysis</h1>
-              <p className="text-gray-600">Identify and bridge skill gaps to unlock more opportunities</p>
+              <p className="text-gray-600">
+                Identify and bridge skill gaps to unlock more opportunities
+              </p>
             </div>
 
             {/* Overview Cards */}
             <div className="grid md:grid-cols-3 gap-6 mb-8">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-              >
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                 <Card hover={false}>
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
@@ -131,10 +140,8 @@ export function SkillGapPage() {
                       <Award className="text-blue-600" size={24} />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {cvSkills.length > 0 ? Math.round((cvSkills.length / (cvSkills.length + skillGap.length)) * 100) : 0}%
-                      </p>
-                      <p className="text-gray-600">Match Percentage</p>
+                      <p className="text-2xl font-bold text-gray-900">{matchPct}%</p>
+                      <p className="text-gray-600">Market Coverage</p>
                     </div>
                   </div>
                 </Card>
@@ -147,37 +154,49 @@ export function SkillGapPage() {
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Missing Skills</h2>
                 <div className="space-y-4">
                   {skillGap.length > 0 ? (
-                    skillGap.map((skill, index) => (
+                    skillGap.map((item, index) => (
                       <motion.div
                         key={index}
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.3, delay: index * 0.1 }}
+                        transition={{ duration: 0.3, delay: index * 0.07 }}
                       >
                         <Card>
                           <div className="flex items-start justify-between mb-4">
                             <div>
                               <h3 className="text-xl font-semibold text-gray-900 mb-1 capitalize">
-                                {skill}
+                                {item.skill}
                               </h3>
-                              <p className="text-gray-600 text-sm">Required for many high-matching jobs</p>
+                              <p className="text-gray-600 text-sm">
+                                In demand across many job listings
+                              </p>
                             </div>
-                            <Tag text="High Priority" variant="warning" />
+                            <Tag
+                              text={`${item.priority} Priority`}
+                              variant={
+                                item.priority === "High"
+                                  ? "warning"
+                                  : item.priority === "Medium"
+                                  ? "default"
+                                  : "success"
+                              }
+                            />
                           </div>
 
                           <div className="space-y-3">
                             <div>
                               <div className="flex justify-between text-sm mb-2">
-                                <span className="text-gray-600">Progress</span>
-                                <span className="font-medium text-gray-900">0%</span>
+                                <span className="text-gray-600">Your current level</span>
+                                <span className="font-medium text-gray-900">Not detected</span>
                               </div>
                               <ProgressBar percentage={0} color="#94a3b8" />
                             </div>
-
                             <div className="pt-3 border-t border-gray-200">
                               <div className="flex items-center gap-2 text-sm text-gray-700">
                                 <TrendingUp size={16} className="text-green-600" />
-                                <span>Closing this gap could increase your matches significantly.</span>
+                                <span>
+                                  Closing this gap could significantly boost your match score.
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -185,62 +204,57 @@ export function SkillGapPage() {
                       </motion.div>
                     ))
                   ) : (
-                    <p className="text-gray-500">No skill gaps identified. Upload your resume to see analysis.</p>
+                    <Card>
+                      <p className="text-gray-500 text-center py-4">
+                        🎉 No skill gaps identified — your skills are well-aligned with current listings!
+                      </p>
+                    </Card>
                   )}
                 </div>
               </div>
 
-              {/* Learning Paths */}
+              {/* FIX: Recommended Courses from API, not hardcoded */}
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Recommended Courses</h2>
                 <div className="space-y-4">
-                  {learningPaths.map((course, index) => (
-                    <motion.div
-                      key={index}
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.1 }}
-                    >
-                      <Card>
-                        <div className="flex items-start gap-3 mb-3">
-                          <div className="w-10 h-10 bg-[#4F46E5]/10 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <BookOpen className="text-[#4F46E5]" size={20} />
+                  {recommendations.length > 0 ? (
+                    recommendations.map((course, index) => (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3, delay: index * 0.1 }}
+                      >
+                        <Card>
+                          <div className="flex items-start gap-3 mb-4">
+                            <div className="w-10 h-10 bg-[#4F46E5]/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                              <BookOpen className="text-[#4F46E5]" size={20} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-semibold text-gray-900 text-sm leading-snug">
+                                {course.title}
+                              </h4>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {new URL(course.url).hostname.replace("www.", "")}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <h4 className="font-semibold text-gray-900 mb-1">
-                              {course.title}
-                            </h4>
-                            <p className="text-sm text-gray-600">{course.provider}</p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2 text-sm mb-4">
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Duration:</span>
-                            <span className="font-medium">{course.duration}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Rating:</span>
-                            <span className="font-medium">⭐ {course.rating}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Students:</span>
-                            <span className="font-medium">{course.students}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-3 border-t border-gray-200">
-                          <span className="text-lg font-bold text-[#4F46E5]">
-                            {course.price}
-                          </span>
-                          <Button size="sm" variant="outline">
-                            <ExternalLink size={16} />
-                            View Course
-                          </Button>
-                        </div>
-                      </Card>
-                    </motion.div>
-                  ))}
+                          <a href={course.url} target="_blank" rel="noreferrer">
+                            <Button size="sm" variant="outline" className="w-full">
+                              <ExternalLink size={16} />
+                              View Course
+                            </Button>
+                          </a>
+                        </Card>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <Card>
+                      <p className="text-gray-500 text-sm text-center py-4">
+                        Course recommendations will appear once skill gaps are identified.
+                      </p>
+                    </Card>
+                  )}
                 </div>
               </div>
             </div>

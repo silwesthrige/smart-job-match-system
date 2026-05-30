@@ -27,12 +27,8 @@ SKILLS_LIST = [
     "microservices", "jira", "rabbitmq", "selenium", "pytest", "unittest", "machine learning", "ml", "deep learning", "nlp", "computer vision", "cv"
 ]
 
-# Precompile regex patterns for performance
-SKILL_PATTERNS = [(s, re.compile(r"\b" + re.escape(s) + r"\b", re.IGNORECASE)) for s in SKILLS_LIST]
-
-# Education keywords
-EDUCATION_KEYWORDS = ["bachelor", "master", "phd", "degree", "university", "college", "graduate", "bs", "ms", "b.sc", "m.sc"]
-CERTIFICATION_KEYWORDS = ["certified", "certification", "certificate", "aws certified", "pmp", "azure certified", "comptia"]
+# Precompile regex patterns for performance - improved to handle special characters
+SKILL_PATTERNS = [(s, re.compile(r"(?<!\w)" + re.escape(s) + r"(?!\w)", re.IGNORECASE)) for s in SKILLS_LIST]
 
 def normalize_skill(skill: str) -> str:
     skill = skill.lower().strip()
@@ -49,7 +45,7 @@ def extract_skills(text: str) -> List[str]:
     
     # Check for synonyms explicitly in text
     for syn, canonical in SKILL_SYNONYMS.items():
-        if re.search(r"\b" + re.escape(syn) + r"\b", text, re.IGNORECASE):
+        if re.search(r"(?<!\w)" + re.escape(syn) + r"(?!\w)", text, re.IGNORECASE):
             found.add(canonical)
             
     return sorted(list(found))

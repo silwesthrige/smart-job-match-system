@@ -1,9 +1,9 @@
 import os
+import bcrypt
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from db import db
 from models import UserSignup, UserLogin, Token, UserBase
 from bson import ObjectId
@@ -14,14 +14,31 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'smart-match-secret-key-2024')
 ALGORITHM = 'HS256'
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        # bcrypt requires bytes
+        password_bytes = plain_password.encode('utf-8')
+        # hashed_password might be stored as string in DB
+        if isinstance(hashed_password, str):
+            hashed_bytes = hashed_password.encode('utf-8')
+        else:
+            hashed_bytes = hashed_password
+            
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except Exception as e:
+        print(f"DEBUG: Auth verify error: {e}")
+        return False
 
 def get_password_hash(password):
-    return pwd_context.hash(password)
+    # bcrypt requires bytes
+    password_bytes = password.encode('utf-8')
+    # Generate salt and hash
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    # Return as string for DB storage
+    return hashed.decode('utf-8')
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
@@ -58,23 +75,31 @@ async def signup(req: UserSignup):
     if existing:
         raise HTTPException(status_code=400, detail='Email already registered')
     
-    hashed = get_password_hash(req.password)
-    user = {
-        'email': req.email,
-        'hashed_password': hashed,
-        'name': req.name,
-        'created_at': datetime.utcnow()
-    }
-    res = await db.users.insert_one(user)
-    return {'user_id': str(res.inserted_id)}
+    print(f"DEBUG: Attempting to register user: {req.email}")
+    try:
+        hashed = get_password_hash(req.password)
+        user = {
+            'email': req.email,
+            'hashed_password': hashed,
+            'name': req.name,
+            'created_at': datetime.utcnow()
+        }
+        res = await db.users.insert_one(user)
+        print(f"DEBUG: User registered successfully with ID: {res.inserted_id}")
+        return {'user_id': str(res.inserted_id)}
+    except Exception as e:
+        print(f"DEBUG: Signup failed with error: {e}")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @router.post('/login', response_model=Token)
 async def login(req: UserLogin):
     user = await db.users.find_one({'email': req.email})
     if not user:
+        print(f"DEBUG: Login failed - user not found: {req.email}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password')
     
     if not verify_password(req.password, user.get('hashed_password', '')):
+        print(f"DEBUG: Login failed - incorrect password: {req.email}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password')
     
     token = create_access_token({'sub': str(user.get('_id'))})
