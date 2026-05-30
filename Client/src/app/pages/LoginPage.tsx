@@ -1,12 +1,31 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../components/Button";
 import { motion } from "motion/react";
 import { Mail, Lock, Sparkles } from "lucide-react";
 import { useState } from "react";
+import { login } from "../../api";
+import { toast } from "sonner";
 
 export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    try {
+      const data = await login({ email, password });
+      localStorage.setItem("token", data.access_token);
+      toast.success("Logged in successfully!");
+      navigate("/dashboard");
+    } catch (error: any) {
+      toast.error(error.message || "Login failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#4F46E5]/10 to-[#06B6D4]/10 flex items-center justify-center p-6">
@@ -24,7 +43,7 @@ export function LoginPage() {
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Welcome Back</h2>
         <p className="text-gray-600 text-center mb-8">Log in to continue your job search</p>
 
-        <form className="space-y-5">
+        <form className="space-y-5" onSubmit={handleSubmit}>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
             <div className="relative">
@@ -34,6 +53,7 @@ export function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                required
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4F46E5] focus:border-transparent"
               />
             </div>
@@ -48,6 +68,7 @@ export function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                required
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4F46E5] focus:border-transparent"
               />
             </div>
@@ -61,11 +82,9 @@ export function LoginPage() {
             <a href="#" className="text-sm text-[#4F46E5] hover:underline">Forgot password?</a>
           </div>
 
-          <Link to="/dashboard">
-            <Button className="w-full" size="lg">
-              Log In
-            </Button>
-          </Link>
+          <Button className="w-full" size="lg" type="submit" disabled={isLoading}>
+            {isLoading ? "Logging in..." : "Log In"}
+          </Button>
         </form>
 
         <div className="mt-6">

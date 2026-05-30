@@ -1,13 +1,31 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../components/Button";
 import { motion } from "motion/react";
 import { Mail, Lock, User, Sparkles } from "lucide-react";
 import { useState } from "react";
+import { signup } from "../../api";
+import { toast } from "sonner";
 
 export function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    try {
+      await signup({ name, email, password });
+      toast.success("Account created successfully! Please log in.");
+      navigate("/login");
+    } catch (error: any) {
+      toast.error(error.message || "Signup failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#4F46E5]/10 to-[#06B6D4]/10 flex items-center justify-center p-6">
@@ -25,7 +43,7 @@ export function SignupPage() {
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Create Account</h2>
         <p className="text-gray-600 text-center mb-8">Start your journey to the perfect job</p>
 
-        <form className="space-y-5">
+        <form className="space-y-5" onSubmit={handleSubmit}>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
             <div className="relative">
@@ -35,6 +53,7 @@ export function SignupPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="John Doe"
+                required
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4F46E5] focus:border-transparent"
               />
             </div>
@@ -49,6 +68,7 @@ export function SignupPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                required
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4F46E5] focus:border-transparent"
               />
             </div>
@@ -63,6 +83,8 @@ export function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                required
+                minLength={8}
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4F46E5] focus:border-transparent"
               />
             </div>
@@ -70,18 +92,16 @@ export function SignupPage() {
           </div>
 
           <label className="flex items-start">
-            <input type="checkbox" className="w-4 h-4 mt-1 text-[#4F46E5] border-gray-300 rounded focus:ring-[#4F46E5]" />
+            <input type="checkbox" required className="w-4 h-4 mt-1 text-[#4F46E5] border-gray-300 rounded focus:ring-[#4F46E5]" />
             <span className="ml-2 text-sm text-gray-600">
               I agree to the <a href="#" className="text-[#4F46E5] hover:underline">Terms of Service</a> and{" "}
               <a href="#" className="text-[#4F46E5] hover:underline">Privacy Policy</a>
             </span>
           </label>
 
-          <Link to="/resume">
-            <Button className="w-full" size="lg">
-              Create Account
-            </Button>
-          </Link>
+          <Button className="w-full" size="lg" type="submit" disabled={isLoading}>
+            {isLoading ? "Creating Account..." : "Create Account"}
+          </Button>
         </form>
 
         <div className="mt-6">

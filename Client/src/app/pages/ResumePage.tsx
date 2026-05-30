@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 import { Upload, FileText, CheckCircle, X } from "lucide-react";
 import React, { useState } from "react";
 import { uploadCV, findGlobalJobs, getSkillGap } from "../../api";
+import { toast } from "sonner";
 
 export function ResumePage() {
   const [isDragging, setIsDragging] = useState(false);
@@ -14,7 +15,6 @@ export function ResumePage() {
   const [progress, setProgress] = useState(0);
   const [matches, setMatches] = useState<any[]>([]);
   const [cvSkillsState, setCvSkillsState] = useState<string[]>([]);
-  const [skillGapState, setSkillGapState] = useState<string[]>([]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -37,37 +37,34 @@ export function ResumePage() {
   const handleFileUpload = async (file: File) => {
     setUploadedFile(file.name);
     setIsProcessing(true);
-    setProgress(5);
+    setProgress(10);
 
     try {
-      const up = await uploadCV(file); // { cv_id }
+      const up = await uploadCV(file);
       setProgress(40);
-      const cvId = up.cv_id;
+      localStorage.setItem("cv_id", up.cv_id);
+      toast.info("CV parsed. Searching for matching jobs...");
 
-      // Trigger scraping + matching
-      const res = await findGlobalJobs(cvId, 10, 50);
+      // Trigger global job search
+      const res = await findGlobalJobs(20);
       setProgress(80);
 
-      // store matches for JobMatchesPage fallback
       const foundMatches = res.matches || [];
       localStorage.setItem("last_matches", JSON.stringify(foundMatches));
       setMatches(foundMatches);
 
-      // get aggregated skill gap and cv skills
-      const sg = await getSkillGap(cvId, 10);
-      const cvSkills = sg.cv_skills || [];
-      const skillGap = sg.skill_gap || [];
-      setCvSkillsState(cvSkills);
-      setSkillGapState(skillGap);
+      // Get initial skill gap to show skills
+      const sg = await getSkillGap();
+      setCvSkillsState(sg.cv_skills || []);
 
       setProgress(100);
-      setIsProcessing(false);
-
-    } catch (err) {
+      toast.success("Job search and analysis complete!");
+    } catch (err: any) {
       console.error(err);
-      setIsProcessing(false);
+      toast.error(err.message || "Upload or matching failed.");
       setProgress(0);
-      alert("Upload or matching failed. Check backend is running and try again.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -85,20 +82,14 @@ export function ResumePage() {
               <p className="text-gray-600">Upload your resume to get matched with the best jobs</p>
             </div>
 
-            {/* Upload Area */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
               <Card hover={false}>
                 <div
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
-                    isDragging
-                      ? "border-[#4F46E5] bg-[#4F46E5]/5"
-                      : "border-gray-300 hover:border-[#4F46E5]"
+                    isDragging ? "border-[#4F46E5] bg-[#4F46E5]/5" : "border-gray-300 hover:border-[#4F46E5]"
                   }`}
                 >
                   {!uploadedFile ? (
@@ -106,32 +97,22 @@ export function ResumePage() {
                       <div className="w-20 h-20 bg-[#4F46E5]/10 rounded-full flex items-center justify-center mx-auto mb-6">
                         <Upload className="text-[#4F46E5]" size={40} />
                       </div>
-                      <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                        Drop your resume here
-                      </h3>
-                      <p className="text-gray-600 mb-6">
-                        or click to browse from your computer
-                      </p>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2">Drop your resume here</h3>
+                      <p className="text-gray-600 mb-6">or click to browse from your computer</p>
                       <input
                         type="file"
                         id="resume-upload"
                         className="hidden"
                         accept=".pdf,.doc,.docx"
                         onChange={(e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            handleFileUpload(e.target.files[0]);
-                          }
+                          if (e.target.files && e.target.files[0]) handleFileUpload(e.target.files[0]);
                         }}
                       />
                       <label htmlFor="resume-upload">
                         <Button as="span" className="cursor-pointer">
-                          <Upload size={20} />
-                          Choose File
+                          <Upload size={20} /> Choose File
                         </Button>
                       </label>
-                      <p className="text-sm text-gray-500 mt-4">
-                        Supported formats: PDF, DOC, DOCX (Max 5MB)
-                      </p>
                     </>
                   ) : (
                     <div>
@@ -143,18 +124,14 @@ export function ResumePage() {
                         )}
                       </div>
                       <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                        {isProcessing ? "Processing..." : "Upload Complete!"}
+                        {isProcessing ? "Processing Analysis..." : "Analysis Complete!"}
                       </h3>
                       <p className="text-gray-600 mb-4">{uploadedFile}</p>
                       
                       {isProcessing && (
                         <div className="w-full max-w-md mx-auto mb-6">
                           <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${progress}%` }}
-                              className="h-full bg-[#4F46E5]"
-                            />
+                            <motion.div animate={{ width: `${progress}%` }} className="h-full bg-[#4F46E5]" />
                           </div>
                           <p className="text-sm text-gray-600 mt-2">{progress}% complete</p>
                         </div>
@@ -163,26 +140,9 @@ export function ResumePage() {
                       {!isProcessing && (
                         <div className="flex gap-3 justify-center">
                           <Button variant="outline" onClick={() => setUploadedFile(null)}>
-                            <X size={20} />
-                            Remove
+                            <X size={20} /> Remove
                           </Button>
-                          <input
-                            type="file"
-                            id="resume-replace"
-                            className="hidden"
-                            accept=".pdf,.doc,.docx"
-                            onChange={(e) => {
-                              if (e.target.files && e.target.files[0]) {
-                                handleFileUpload(e.target.files[0]);
-                              }
-                            }}
-                          />
-                          <label htmlFor="resume-replace">
-                            <Button as="span" className="cursor-pointer">
-                              <Upload size={20} />
-                              Upload New
-                            </Button>
-                          </label>
+                          <Button onClick={() => setUploadedFile(null)}>Upload New</Button>
                         </div>
                       )}
                     </div>
@@ -191,96 +151,35 @@ export function ResumePage() {
               </Card>
             </motion.div>
 
-            {/* Resume Preview/Analysis */}
             {uploadedFile && !isProcessing && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-8 grid md:grid-cols-2 gap-6"
-              >
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-8 grid md:grid-cols-2 gap-6">
                 <Card>
                   <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <FileText className="text-[#4F46E5]" size={22} />
-                    Extracted Information
+                    <FileText className="text-[#4F46E5]" size={22} /> Extracted Information
                   </h3>
                   <div className="space-y-3">
-                    <div>
-                      <p className="text-sm text-gray-600">File</p>
-                      <p className="font-medium text-gray-900">{uploadedFile}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Detected Skills</p>
-                      <p className="font-medium text-gray-900">{cvSkillsState.join(', ') || '—'}</p>
-                    </div>
-                  </div>
-                </Card>
-
-                <Card>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Detected Skills</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {cvSkillsState.length > 0 ? (
-                      cvSkillsState.map((skill, index) => (
-                        <span key={index} className="px-3 py-1 bg-[#4F46E5]/10 text-[#4F46E5] rounded-full text-sm">
-                          {skill}
+                    <p className="text-sm text-gray-600">Detected Skills</p>
+                    <div className="flex flex-wrap gap-2">
+                      {cvSkillsState.map((s, i) => (
+                        <span key={i} className="px-3 py-1 bg-[#4F46E5]/10 text-[#4F46E5] rounded-full text-xs">
+                          {s}
                         </span>
-                      ))
-                    ) : (
-                      <span className="text-sm text-gray-500">No skills detected yet.</span>
-                    )}
+                      ))}
+                    </div>
                   </div>
                 </Card>
-              </motion.div>
-            )}
-
-            {/* Matches */}
-            {matches.length > 0 && (
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-8">
+                
                 <Card>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Matches</h3>
-                  <div className="space-y-4">
-                    {matches.map((job, idx) => (
-                      <div key={job.job_id || idx} className="flex items-center justify-between">
-                        <div>
-                          <div className="font-semibold">{job.title}</div>
-                          <div className="text-sm text-gray-600">{job.company}</div>
-                          <div className="text-sm text-gray-500">Score: {(job.score*100 || job.score).toFixed ? (job.score*100).toFixed(1) : job.score}</div>
-                        </div>
-                        <div>
-                          <a href={job.url} target="_blank" rel="noreferrer">
-                            <Button>View</Button>
-                          </a>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Insights</h3>
+                  <p className="text-gray-600 text-sm">
+                    We found {matches.length} matching jobs across various platforms based on your profile.
+                  </p>
+                  <Link to="/job-matches" className="block mt-4">
+                    <Button variant="outline" className="w-full">View All Matches</Button>
+                  </Link>
                 </Card>
               </motion.div>
             )}
-
-            {/* Tips */}            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="mt-8"
-            >
-              <Card hover={false}>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Resume Tips</h3>
-                <ul className="space-y-2">
-                  {[
-                    "Use clear section headings (Education, Experience, Skills)",
-                    "Include quantifiable achievements and metrics",
-                    "List relevant technical skills and tools",
-                    "Keep formatting simple and clean",
-                    "Ensure your contact information is up to date",
-                  ].map((tip, index) => (
-                    <li key={index} className="flex items-start gap-3">
-                      <CheckCircle className="text-green-500 mt-0.5 flex-shrink-0" size={18} />
-                      <span className="text-gray-700">{tip}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            </motion.div>
           </div>
         </main>
       </div>

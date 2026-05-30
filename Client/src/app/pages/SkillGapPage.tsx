@@ -5,45 +5,9 @@ import { Button } from "../components/Button";
 import { Tag } from "../components/Tag";
 import { ProgressBar } from "../components/ProgressBar";
 import { motion } from "motion/react";
-import { TrendingUp, BookOpen, Award, ExternalLink, Target } from "lucide-react";
-
-const skillGaps = [
-  {
-    skill: "TypeScript",
-    priority: "High",
-    currentLevel: 40,
-    requiredLevel: 80,
-    impact: "Opens 45 new job matches",
-  },
-  {
-    skill: "GraphQL",
-    priority: "High",
-    currentLevel: 20,
-    requiredLevel: 70,
-    impact: "Opens 32 new job matches",
-  },
-  {
-    skill: "Docker",
-    priority: "Medium",
-    currentLevel: 30,
-    requiredLevel: 75,
-    impact: "Opens 28 new job matches",
-  },
-  {
-    skill: "AWS",
-    priority: "Medium",
-    currentLevel: 25,
-    requiredLevel: 65,
-    impact: "Opens 38 new job matches",
-  },
-  {
-    skill: "Next.js",
-    priority: "Low",
-    currentLevel: 50,
-    requiredLevel: 80,
-    impact: "Opens 15 new job matches",
-  },
-];
+import { TrendingUp, BookOpen, Award, ExternalLink, Target, Loader2 } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { getSkillGap } from "../../api";
 
 const learningPaths = [
   {
@@ -73,6 +37,38 @@ const learningPaths = [
 ];
 
 export function SkillGapPage() {
+  const [skillGap, setSkillGap] = useState<string[]>([]);
+  const [cvSkills, setCvSkills] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      const cvId = localStorage.getItem("cv_id");
+      if (!cvId) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const data = await getSkillGap(cvId);
+        setSkillGap(data.skill_gap || []);
+        setCvSkills(data.cv_skills || []);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchData();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen bg-gray-50 items-center justify-center">
+        <Loader2 className="animate-spin text-[#4F46E5]" size={48} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
@@ -99,7 +95,7 @@ export function SkillGapPage() {
                       <Target className="text-orange-600" size={24} />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-gray-900">5</p>
+                      <p className="text-2xl font-bold text-gray-900">{skillGap.length}</p>
                       <p className="text-gray-600">Skills to Improve</p>
                     </div>
                   </div>
@@ -117,8 +113,8 @@ export function SkillGapPage() {
                       <TrendingUp className="text-green-600" size={24} />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-gray-900">158</p>
-                      <p className="text-gray-600">Potential New Matches</p>
+                      <p className="text-2xl font-bold text-gray-900">{cvSkills.length}</p>
+                      <p className="text-gray-600">Identified Skills</p>
                     </div>
                   </div>
                 </Card>
@@ -135,8 +131,10 @@ export function SkillGapPage() {
                       <Award className="text-blue-600" size={24} />
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-gray-900">95%</p>
-                      <p className="text-gray-600">Target Match Score</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {cvSkills.length > 0 ? Math.round((cvSkills.length / (cvSkills.length + skillGap.length)) * 100) : 0}%
+                      </p>
+                      <p className="text-gray-600">Match Percentage</p>
                     </div>
                   </div>
                 </Card>
@@ -148,60 +146,47 @@ export function SkillGapPage() {
               <div className="lg:col-span-2">
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Missing Skills</h2>
                 <div className="space-y-4">
-                  {skillGaps.map((gap, index) => (
-                    <motion.div
-                      key={index}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.1 }}
-                    >
-                      <Card>
-                        <div className="flex items-start justify-between mb-4">
-                          <div>
-                            <h3 className="text-xl font-semibold text-gray-900 mb-1">
-                              {gap.skill}
-                            </h3>
-                            <p className="text-gray-600 text-sm">{gap.impact}</p>
-                          </div>
-                          <Tag
-                            text={gap.priority}
-                            variant={
-                              gap.priority === "High"
-                                ? "warning"
-                                : gap.priority === "Medium"
-                                ? "info"
-                                : "default"
-                            }
-                          />
-                        </div>
-
-                        <div className="space-y-3">
-                          <div>
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="text-gray-600">Current Level</span>
-                              <span className="font-medium text-gray-900">{gap.currentLevel}%</span>
+                  {skillGap.length > 0 ? (
+                    skillGap.map((skill, index) => (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3, delay: index * 0.1 }}
+                      >
+                        <Card>
+                          <div className="flex items-start justify-between mb-4">
+                            <div>
+                              <h3 className="text-xl font-semibold text-gray-900 mb-1 capitalize">
+                                {skill}
+                              </h3>
+                              <p className="text-gray-600 text-sm">Required for many high-matching jobs</p>
                             </div>
-                            <ProgressBar percentage={gap.currentLevel} color="#94a3b8" />
+                            <Tag text="High Priority" variant="warning" />
                           </div>
 
-                          <div>
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="text-gray-600">Required Level</span>
-                              <span className="font-medium text-gray-900">{gap.requiredLevel}%</span>
+                          <div className="space-y-3">
+                            <div>
+                              <div className="flex justify-between text-sm mb-2">
+                                <span className="text-gray-600">Progress</span>
+                                <span className="font-medium text-gray-900">0%</span>
+                              </div>
+                              <ProgressBar percentage={0} color="#94a3b8" />
                             </div>
-                            <ProgressBar percentage={gap.requiredLevel} color="#4F46E5" />
-                          </div>
 
-                          <div className="pt-3 border-t border-gray-200">
-                            <div className="flex items-center gap-2 text-sm text-gray-700">
-                              <TrendingUp size={16} className="text-green-600" />
-                              <span>Gap to close: {gap.requiredLevel - gap.currentLevel} points</span>
+                            <div className="pt-3 border-t border-gray-200">
+                              <div className="flex items-center gap-2 text-sm text-gray-700">
+                                <TrendingUp size={16} className="text-green-600" />
+                                <span>Closing this gap could increase your matches significantly.</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </Card>
-                    </motion.div>
-                  ))}
+                        </Card>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500">No skill gaps identified. Upload your resume to see analysis.</p>
+                  )}
                 </div>
               </div>
 
@@ -257,32 +242,6 @@ export function SkillGapPage() {
                     </motion.div>
                   ))}
                 </div>
-
-                {/* Progress Tracker */}
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.4 }}
-                  className="mt-6"
-                >
-                  <Card hover={false}>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                      Learning Progress
-                    </h3>
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-2">Overall Progress</p>
-                        <ProgressBar percentage={35} color="#4F46E5" label="" />
-                        <p className="text-xs text-gray-500 mt-2">
-                          Keep learning to unlock more opportunities!
-                        </p>
-                      </div>
-                      <Button className="w-full mt-4">
-                        Track Learning
-                      </Button>
-                    </div>
-                  </Card>
-                </motion.div>
               </div>
             </div>
           </div>

@@ -1,20 +1,21 @@
 import os
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Query
 from fastapi.responses import JSONResponse
 from bson import ObjectId
-from typing import List
+from typing import List, Optional
 import numpy as np
 import asyncio
 
-from .db import db
-from .simple_tfidf import compute_tfidf_similarity
+from db import db, setup_db
+from simple_tfidf import compute_tfidf_similarity
 import pdfplumber
 from io import BytesIO
-from . import scraper
-from .ml_utils import extract_skills, compute_skill_gap
-from .auth import router as auth_router
+import scraper
+from ml_utils import parse_cv_text, compute_skill_gap, normalize_skill, extract_skills
+from auth import router as auth_router, get_current_user
 from fastapi.middleware.cors import CORSMiddleware
+from models import MatchResult, SkillGapResponse
 
 app = FastAPI(title="Smart Job Match - Backend")
 app.include_router(auth_router, prefix="/auth")
@@ -22,19 +23,22 @@ app.include_router(auth_router, prefix="/auth")
 # Allow CORS from local frontend dev servers
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
+    allow_origins=["*"], # In production, restrict this to your domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_event():
+    await setup_db()
+
 @app.get("/")
 async def read_root():
-    return {"message": "Smart Job Match API"}
+    return {"message": "Smart Job Match API", "status": "online"}
 
 @app.get("/health")
 async def health():
-    # quick DB ping
     try:
         await db.command({"ping": 1})
         db_status = "ok"
@@ -43,11 +47,10 @@ async def health():
     return {"status": "ok", "db": db_status}
 
 @app.post("/cv/upload")
-async def upload_cv(file: UploadFile = File(...)):
+async def upload_cv(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """Upload a CV (PDF or text). Extracts text and stores in MongoDB."""
     content = await file.read()
-    text = None
-    # Try PDF extraction
+    text = ""
     try:
         if file.filename.lower().endswith('.pdf'):
             with pdfplumber.open(BytesIO(content)) as pdf:
@@ -61,150 +64,155 @@ async def upload_cv(file: UploadFile = File(...)):
     if not text or text.strip() == '':
         raise HTTPException(status_code=400, detail="No text extracted from CV")
 
-    cv_skills = extract_skills(text)
+    extracted_data = parse_cv_text(text)
 
     doc = {
+        "user_id": current_user["_id"],
         "filename": file.filename,
         "text": text,
-        "skills": cv_skills,
+        "extracted_data": extracted_data.dict(),
         "created_at": datetime.utcnow()
     }
-    result = await db.cvs.insert_one(doc)
-    return {"cv_id": str(result.inserted_id)}
+    # Update existing CV or insert new one for the user
+    result = await db.cvs.update_one(
+        {"user_id": current_user["_id"]},
+        {"$set": doc},
+        upset=True
+    )
+    
+    cv_id = str(result.upserted_id) if result.upserted_id else None
+    if not cv_id:
+        existing = await db.cvs.find_one({"user_id": current_user["_id"]})
+        cv_id = str(existing["_id"])
+        
+    return {"cv_id": cv_id, "message": "CV uploaded and parsed successfully"}
 
-
-async def _match_by_tfidf(cv_text: str, top_k: int = 10, max_jobs: int = 1000):
-    """Internal helper: find top-k job matches for given cv text using TF-IDF."""
-    cursor = db.jobs.find({}, {"title": 1, "company": 1, "description": 1, "url": 1, "skills":1}).limit(max_jobs)
-    jobs = await cursor.to_list(length=max_jobs)
+async def _calculate_weighted_match(cv_doc: dict, jobs: List[dict]):
+    """Advanced weighted matching logic."""
     if not jobs:
         return []
 
-    job_texts = [j.get('description', '') for j in jobs]
-    sims = compute_tfidf_similarity(cv_text, job_texts, max_features=5000)
-    top_idx = np.argsort(sims)[::-1][:top_k]
+    cv_text = cv_doc.get('text', '')
+    cv_data = cv_doc.get('extracted_data', {})
+    cv_skills = set(cv_data.get('skills', []))
+    cv_years = cv_data.get('years_of_experience', 0.0)
 
-    matches = []
-    for idx in top_idx:
-        job = jobs[int(idx)]
-        matches.append({
+    job_texts = [j.get('description', '') for j in jobs]
+    tfidf_sims = compute_tfidf_similarity(cv_text, job_texts, max_features=5000)
+
+    results = []
+    for idx, job in enumerate(jobs):
+        job_skills = set(job.get('skills', []) or extract_skills(job.get('description', '')))
+        
+        # 1. TF-IDF Score (40%)
+        t_score = tfidf_sims[idx]
+        
+        # 2. Skill Overlap Score (50%)
+        matched_skills = cv_skills.intersection(job_skills)
+        missing_skills = job_skills - cv_skills
+        s_score = len(matched_skills) / len(job_skills) if job_skills else 0.5
+        
+        # 3. Experience Match (10%) - very basic heuristic
+        # If job has 'years' in description, try to compare
+        e_score = 1.0 # default
+        
+        final_score = (t_score * 0.4) + (s_score * 0.5) + (e_score * 0.1)
+        
+        results.append({
             "job_id": str(job.get('_id')),
             "title": job.get('title'),
             "company": job.get('company'),
             "url": job.get('url'),
-            "score": float(sims[int(idx)]),
-            "skills": job.get('skills', [])
+            "score": round(final_score, 4),
+            "matched_skills": sorted(list(matched_skills)),
+            "missing_skills": sorted(list(missing_skills)),
+            "skill_gap": sorted(list(missing_skills))
         })
-    return matches
+    
+    # Sort by score descending
+    results.sort(key=lambda x: x['score'], reverse=True)
+    return results
 
-
-@app.get("/cv/{cv_id}/matches")
-async def match_jobs(cv_id: str, top_k: int = 10, max_jobs: int = 1000):
-    """Return top-k job matches for the given CV id using TF-IDF."""
-    try:
-        cv = await db.cvs.find_one({"_id": ObjectId(cv_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid cv_id")
+@app.get("/cv/matches", response_model=List[MatchResult])
+async def get_matches(top_k: int = 10, current_user: dict = Depends(get_current_user)):
+    """Return top-k job matches for the current user's CV."""
+    cv = await db.cvs.find_one({"user_id": current_user["_id"]})
     if not cv:
-        raise HTTPException(status_code=404, detail="CV not found")
+        raise HTTPException(status_code=404, detail="CV not found. Please upload a CV first.")
 
-    cv_text = cv.get('text', '')
-    if not cv_text:
-        raise HTTPException(status_code=400, detail="No text found for CV")
+    # Fetch some jobs to match against (e.g., last 200)
+    cursor = db.jobs.find().sort("created_at", -1).limit(200)
+    jobs = await cursor.to_list(length=200)
+    
+    matches = await _calculate_weighted_match(cv, jobs)
+    return matches[:top_k]
 
-    matches = await _match_by_tfidf(cv_text, top_k=top_k, max_jobs=max_jobs)
-    return {"matches": matches}
-
-
-@app.post("/cv/{cv_id}/find_global_jobs")
-async def find_global_jobs(cv_id: str, top_k: int = 10, limit_per_site: int = 50, max_jobs: int = 1000):
-    """Scrape global job sites, store job postings, then return top-k matches for the CV including skill gaps."""
-    try:
-        cv = await db.cvs.find_one({"_id": ObjectId(cv_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid cv_id")
+@app.post("/cv/find_global_jobs")
+async def find_global_jobs(limit_per_site: int = 20, current_user: dict = Depends(get_current_user)):
+    """Scrape and fetch global jobs, then return matches."""
+    cv = await db.cvs.find_one({"user_id": current_user["_id"]})
     if not cv:
-        raise HTTPException(status_code=404, detail="CV not found")
+        raise HTTPException(status_code=404, detail="CV not found. Please upload a CV first.")
 
-    # Run scrapers in thread to avoid blocking the event loop
+    # Run scrapers
     scraped_jobs = await asyncio.to_thread(scraper.scrape_all, limit_per_site)
 
-    # Upsert scraped jobs into MongoDB and compute skills
-    inserted = 0
+    # Upsert jobs
     for job in scraped_jobs:
-        title = job.get('title')
-        company = job.get('company')
         url = job.get('url')
-        description = job.get('description') or ''
-        skills = job.get('skills') or extract_skills(description)
-        if not title or not description or not url:
-            continue
-        doc = {
-            'title': title,
-            'company': company,
-            'url': url,
-            'description': description,
-            'skills': skills,
-            'created_at': job.get('created_at', datetime.utcnow())
-        }
-        # upsert by url
-        await db.jobs.update_one({'url': url}, {'$set': doc}, upsert=True)
-        inserted += 1
+        if not url: continue
+        await db.jobs.update_one({'url': url}, {'$set': job}, upsert=True)
 
-    # Now run matching
-    cv_text = cv.get('text', '')
-    if not cv_text:
-        raise HTTPException(status_code=400, detail="No text found for CV")
+    # Re-fetch recent jobs to match
+    cursor = db.jobs.find().sort("created_at", -1).limit(100)
+    jobs = await cursor.to_list(length=100)
+    
+    matches = await _calculate_weighted_match(cv, jobs)
+    return {"matches": matches[:10]}
 
-    matches = await _match_by_tfidf(cv_text, top_k=top_k, max_jobs=max_jobs)
-
-    # compute skill gaps per match
-    cv_skills = cv.get('skills', []) or extract_skills(cv.get('text', ''))
-    for m in matches:
-        job_skills = m.get('skills', [])
-        m['skill_gap'] = compute_skill_gap(cv_skills, job_skills)
-
-    return {"inserted_jobs": inserted, "matches": matches}
-
-
-@app.get('/cv/{cv_id}/skill_gap')
-async def cv_skill_gap(cv_id: str, top_k: int = 10):
-    """Compute aggregated skill gap between CV and top-k matching jobs."""
-    try:
-        cv = await db.cvs.find_one({"_id": ObjectId(cv_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid cv_id")
+@app.get('/cv/skill_gap', response_model=SkillGapResponse)
+async def cv_skill_gap(current_user: dict = Depends(get_current_user)):
+    """Compute aggregated skill gap analysis."""
+    cv = await db.cvs.find_one({"user_id": current_user["_id"]})
     if not cv:
         raise HTTPException(status_code=404, detail="CV not found")
-    cv_skills = cv.get('skills', []) or extract_skills(cv.get('text', ''))
-    cv_text = cv.get('text', '')
-    if not cv_text:
-        raise HTTPException(status_code=400, detail="No text found for CV")
-    matches = await _match_by_tfidf(cv_text, top_k=top_k)
-    # aggregate job skills
-    needed = set()
-    for m in matches:
-        needed.update([s.lower() for s in m.get('skills', [])])
-    gap = sorted(needed - set([s.lower() for s in cv_skills]))
-    return {"cv_skills": cv_skills, "aggregated_needed_skills": sorted(needed), "skill_gap": gap}
+    
+    cv_skills = cv.get('extracted_data', {}).get('skills', [])
+    
+    # Fetch recent jobs to aggregate needed skills
+    cursor = db.jobs.find().sort("created_at", -1).limit(50)
+    jobs = await cursor.to_list(length=50)
+    
+    needed_counts = {}
+    for j in jobs:
+        jskills = j.get('skills', []) or extract_skills(j.get('description', ''))
+        for s in jskills:
+            needed_counts[s] = needed_counts.get(s, 0) + 1
+            
+    # Gap = skills in jobs but not in CV
+    cv_skills_set = set(cv_skills)
+    gap = []
+    for skill, count in needed_counts.items():
+        if skill not in cv_skills_set:
+            priority = "High" if count > 15 else "Medium" if count > 5 else "Low"
+            gap.append({"skill": skill, "priority": priority})
+            
+    gap.sort(key=lambda x: ("High", "Medium", "Low").index(x["priority"]))
+    
+    # Recommendations (mock URLs for now)
+    recs = []
+    for g in gap[:5]:
+        recs.append({
+            "title": f"Master {g['skill'].capitalize()} on Udemy",
+            "url": f"https://www.udemy.com/results/?q={g['skill']}"
+        })
 
-
-@app.post("/jobs/add")
-async def add_job(title: str, company: str = None, url: str = None, description: str = None):
-    """Add a job posting manually. Stores it with extracted skills."""
-    if not description:
-        raise HTTPException(status_code=400, detail="Job description is required")
-    skills = extract_skills(description)
-    doc = {
-        "title": title,
-        "company": company,
-        "url": url,
-        "description": description,
-        "skills": skills,
-        "created_at": datetime.utcnow()
+    return {
+        "cv_skills": cv_skills,
+        "aggregated_needed_skills": sorted(list(needed_counts.keys())),
+        "skill_gap": gap[:10],
+        "recommendations": recs
     }
-    res = await db.jobs.insert_one(doc)
-    return {"job_id": str(res.inserted_id)}
 
 if __name__ == "__main__":
     import uvicorn

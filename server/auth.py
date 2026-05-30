@@ -1,40 +1,27 @@
 import os
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext
+from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from .db import db
+from passlib.context import CryptContext
+from db import db
+from models import UserSignup, UserLogin, Token, UserBase
+from bson import ObjectId
 
 router = APIRouter()
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'change-this-secret')
+SECRET_KEY = os.getenv('SECRET_KEY', 'smart-match-secret-key-2024')
 ALGORITHM = 'HS256'
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-class SignupRequest(BaseModel):
-    email: EmailStr
-    password: str
-    name: str | None = None
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-
 def get_password_hash(password):
     return pwd_context.hash(password)
-
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
@@ -46,12 +33,31 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if user is None:
+        raise credentials_exception
+    return user
 
-@router.post('/signup')
-async def signup(req: SignupRequest):
+@router.post('/signup', status_code=status.HTTP_201_CREATED)
+async def signup(req: UserSignup):
     existing = await db.users.find_one({'email': req.email})
     if existing:
         raise HTTPException(status_code=400, detail='Email already registered')
+    
     hashed = get_password_hash(req.password)
     user = {
         'email': req.email,
@@ -62,13 +68,18 @@ async def signup(req: SignupRequest):
     res = await db.users.insert_one(user)
     return {'user_id': str(res.inserted_id)}
 
-
 @router.post('/login', response_model=Token)
-async def login(req: LoginRequest):
+async def login(req: UserLogin):
     user = await db.users.find_one({'email': req.email})
     if not user:
-        raise HTTPException(status_code=400, detail='Invalid credentials')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password')
+    
     if not verify_password(req.password, user.get('hashed_password', '')):
-        raise HTTPException(status_code=400, detail='Invalid credentials')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password')
+    
     token = create_access_token({'sub': str(user.get('_id'))})
     return {'access_token': token, 'token_type': 'bearer'}
+
+@router.get('/me', response_model=UserBase)
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return current_user
